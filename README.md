@@ -1,7 +1,7 @@
 # 🎬 Clinical Video Annotation Tool
 
-A desktop tool for annotating clinical videos (e.g. Dystonia Impairment
-Scale / Barry-Albright Dystonia Scale scoring) on a per-window or
+A desktop tool for annotating clinical videos (e.g. Dyskinesia Impairment
+Scale (DIS) / Barry-Albright Dystonia Scale (BADS) scoring) on a per-window or
 per-video basis, with CSV score export and optional annotated MP4
 export.
 
@@ -22,7 +22,7 @@ time you run them.
 
 ## ⚙️ 1. Installation
 
-### 🐍 Step 1 — Install Python (one-time, skip if already installed)
+### Step 1: Install Python (one-time, skip if already installed)
 
 1. Go to <https://www.python.org/downloads> and download Python 3.10 or
    newer.
@@ -32,7 +32,7 @@ time you run them.
 3. If you use Anaconda/Miniconda instead of a standalone Python
    install, see the **Anaconda / Miniconda users** note below.
 
-### 🚀 Step 2 — Run the setup script
+### Step 2: Run the setup script
 
 **Windows:** double-click `run.bat`.
 
@@ -44,7 +44,7 @@ chmod +x run.sh     # first time only, makes the script executable
 
 The first run will:
 - create a local, self-contained Python environment in a new `.venv`
-  folder (this does **not** touch your system Python — see note below),
+  folder (this does **not** touch your system Python, see note below),
 - install all required packages into that environment,
 - launch the application.
 
@@ -59,7 +59,7 @@ script again.
 > `.venv` removes 100% of what the script has ever installed, with zero
 > side effects elsewhere on your computer.
 
-### 🐍 Anaconda / Miniconda users
+### Anaconda / Miniconda users
 
 If Python was installed via Anaconda/Miniconda rather than the
 standalone python.org installer, `run.bat` can only see it if it is
@@ -85,22 +85,22 @@ active:
 
 ## 🖱️ 2. Using the application
 
-### 🛠️ Step 1 — Configure the session
+### 🛠️ Step 1: Configure the session
 
 On launch you'll see a configuration screen where you choose:
 
-- **Project preset** — a ready-made configuration (e.g. QUOVADYS, DIS,
+- **Project preset**: a ready-made configuration (e.g. QUOVADYS, DIS,
   BADS, UMC, DIS + BADS), or "None" to configure everything manually.
-- **Point scale** — 3-point (0–2) or 5-point (0–4) scoring.
-- **Timing mode** — score every 5-second window of the video, or score
+- **Point scale**: 3-point (0–2) or 5-point (0–4) scoring.
+- **Timing mode**: score every 5-second window of the video, or score
   the full video at once.
-- **Body scoring mode** — score the whole body together, or each body
+- **Body scoring mode**: score the whole body together, or each body
   part separately.
-- **Clinical scale type** — Dystonia Impairment Scale (DIS) and/or
+- **Clinical scale type**: Dyskinesia Impairment Scale (DIS) and/or
   Barry-Albright Dystonia Scale (BADS), with sub-options for which
   movement type to score under DIS (dystonia, choreoathetosis, or
   both).
-- **Saving options** — whether to save a CSV score file and/or export
+- **Saving options**: whether to save a CSV score file and/or export
   an annotated MP4 with the scores burned in.
 
 The **Body Parts to Score** list on the right updates automatically
@@ -108,14 +108,14 @@ based on your preset/scale selection.
 
 Click **Start Annotation Session** to continue.
 
-### 🎞️ Step 2 — Select videos
+### 🎞️ Step 2: Select videos
 
 - **Add MP4 files** to pick one or more videos individually, or
   **Add folder** to add every MP4 in a folder at once.
 - Use **Remove selected** / **Clear list** to adjust your selection.
 - Click **Start Annotation** when your video list is ready.
 
-### ✅ Step 3 — Annotate
+### ✅ Step 3: Annotate
 
 For each video (and, in window mode, each 5-second segment):
 
@@ -170,9 +170,6 @@ Miniconda users** section above.
 
 ### ❌ "Python 3 was not found" (macOS / Linux)
 
-`run.sh` now checks for a real Python 3 interpreter the same way
-`run.bat` does on Windows, and prints platform-specific install
-instructions if none is found:
 - **macOS:** install from <https://www.python.org/downloads> (the
   `.pkg` installer). If you're ever prompted to install "Command Line
   Tools", accept that first.
@@ -197,12 +194,6 @@ sudo apt install python3-venv
 ```
 then run `./run.sh` again.
 
-### 🎨 The window looks slightly different than expected
-
-The interface uses a Windows system font ("Segoe UI"). On macOS/Linux
-this isn't available, so the OS substitutes a default font — this is
-cosmetic only and does not affect functionality.
-
 ### 🔒 Pip / installation fails with a permissions or policy error
 
 Some managed/work computers block package installation via group
@@ -212,5 +203,4 @@ tool on a personal machine instead.
 ### 🆘 Still stuck?
 
 Delete the `.venv` folder and run the setup script again for a clean
-reinstall. If the problem persists, note down the exact error message
-shown in the terminal window and share it for further help.
+reinstall.
