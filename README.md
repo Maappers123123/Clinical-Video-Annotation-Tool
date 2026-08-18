@@ -17,6 +17,7 @@ scorer.py           The application itself
 You do **not** need to install anything manually beyond Python itself:
 `run.bat` / `run.sh` will set everything else up automatically the first
 time you run them.
+
 ---
 
 ## 🚀 1. Using the application
