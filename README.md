@@ -93,6 +93,13 @@ Depending on what you enabled in Step 1:
 - A **CSV file** with all scores, one row per scored window/video.
 - An **annotated MP4** per input video, with your scores overlaid,
   saved alongside the original video.
+  
+Both output files are saved **in the same folder as the source video**,
+named after it (e.g. `001_02.mp4` → `001_02_scores.csv` and
+`001_02_scored.mp4`). Make sure that folder is writable, if it's
+read-only, on a restricted network drive, or the CSV is already open in
+another program (e.g. Excel), saving will fail with a permissions
+error.
 
 ---
 
