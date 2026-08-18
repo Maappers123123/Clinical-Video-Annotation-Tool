@@ -164,7 +164,7 @@ Depending on what you enabled in Step 1:
 ### ❌ "Python was not found" / Microsoft Store popup
 
 Python is not installed, or not on your system PATH. See **Step 1**
-above — reinstall from python.org and make sure "Add python.exe to
+above: reinstall from python.org and make sure "Add python.exe to
 PATH" is checked. If you use Anaconda/Miniconda, see the **Anaconda /
 Miniconda users** section above.
 
