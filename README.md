@@ -14,7 +14,7 @@ run.sh              Installer + launcher for macOS / Linux
 scorer.py           The application itself
 ```
 
-You do **not** need to install anything manually beyond Python itself —
+You do **not** need to install anything manually beyond Python itself:
 `run.bat` / `run.sh` will set everything else up automatically the first
 time you run them.
 
