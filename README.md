@@ -17,73 +17,9 @@ scorer.py           The application itself
 You do **not** need to install anything manually beyond Python itself:
 `run.bat` / `run.sh` will set everything else up automatically the first
 time you run them.
-
 ---
 
-## ⚙️ 1. Installation
-
-### Step 1: Install Python (one-time, skip if already installed)
-
-1. Go to <https://www.python.org/downloads> and download Python 3.10 or
-   newer.
-2. Run the installer. **⚠️ On the very first screen, check the box "Add
-   python.exe to PATH"** before clicking Install. This step is easy to
-   miss and is the most common cause of installation problems.
-3. If you use Anaconda/Miniconda instead of a standalone Python
-   install, see the **Anaconda / Miniconda users** note below.
-
-### Step 2: Run the setup script
-
-**Windows:** double-click `run.bat`.
-
-**macOS / Linux:** open a terminal in this folder and run:
-```
-chmod +x run.sh     # first time only, makes the script executable
-./run.sh
-```
-
-The first run will:
-- create a local, self-contained Python environment in a new `.venv`
-  folder (this does **not** touch your system Python, see note below),
-- install all required packages into that environment,
-- launch the application.
-
-Every run after that reuses the same `.venv` and starts much faster,
-since the packages are already installed. If you ever want to force a
-completely clean reinstall, just delete the `.venv` folder and run the
-script again.
-
-> **🔐 Is this safe for my system Python / Anaconda install?**
-> Yes. Everything the script installs goes into the local `.venv`
-> folder only, never into your system-wide or Anaconda Python. Deleting
-> `.venv` removes 100% of what the script has ever installed, with zero
-> side effects elsewhere on your computer.
-
-### Anaconda / Miniconda users
-
-If Python was installed via Anaconda/Miniconda rather than the
-standalone python.org installer, `run.bat` can only see it if it is
-launched from a terminal where that conda environment is already
-active:
-
-1. Open **Anaconda Prompt** from the Start menu (not a plain
-   Command Prompt / PowerShell window).
-2. Navigate to this folder, e.g.:
-   ```
-   cd C:\path\to\this\folder
-   ```
-   (Tip: drag the folder from File Explorer into the terminal window to
-   auto-fill the correct path.)
-3. Run the script:
-   ```
-   run.bat
-   ```
-   In PowerShell specifically, type `.\run.bat` (with the leading
-   `.\`) instead of `run.bat`.
-
----
-
-## 🖱️ 2. Using the application
+## 🚀 1. Using the application
 
 ### 🛠️ Step 1: Configure the session
 
@@ -156,6 +92,69 @@ Depending on what you enabled in Step 1:
 - A **CSV file** with all scores, one row per scored window/video.
 - An **annotated MP4** per input video, with your scores overlaid,
   saved alongside the original video.
+
+---
+
+## ⚙️ 2. Installation
+
+### Step 1: Install Python (one-time, skip if already installed)
+
+1. Go to <https://www.python.org/downloads> and download Python 3.10 or
+   newer.
+2. Run the installer. **⚠️ On the very first screen, check the box "Add
+   python.exe to PATH"** before clicking Install. This step is easy to
+   miss and is the most common cause of installation problems.
+3. If you use Anaconda/Miniconda instead of a standalone Python
+   install, see the **Anaconda / Miniconda users** note below.
+
+### Step 2: Run the setup script
+
+**Windows:** double-click `run.bat`.
+
+**macOS / Linux:** open a terminal in this folder and run:
+```
+chmod +x run.sh     # first time only, makes the script executable
+./run.sh
+```
+
+The first run will:
+- create a local, self-contained Python environment in a new `.venv`
+  folder (this does **not** touch your system Python, see note below),
+- install all required packages into that environment,
+- launch the application.
+
+Every run after that reuses the same `.venv` and starts much faster,
+since the packages are already installed. If you ever want to force a
+completely clean reinstall, just delete the `.venv` folder and run the
+script again.
+
+> **🔐 Is this safe for my system Python / Anaconda install?**
+> Yes. Everything the script installs goes into the local `.venv`
+> folder only, never into your system-wide or Anaconda Python. Deleting
+> `.venv` removes 100% of what the script has ever installed, with zero
+> side effects elsewhere on your computer.
+
+### Anaconda / Miniconda users
+
+If Python was installed via Anaconda/Miniconda rather than the
+standalone python.org installer, `run.bat` can only see it if it is
+launched from a terminal where that conda environment is already
+active:
+
+1. Open **Anaconda Prompt** from the Start menu (not a plain
+   Command Prompt / PowerShell window).
+2. Navigate to this folder, e.g.:
+   ```
+   cd C:\path\to\this\folder
+   ```
+   (Tip: drag the folder from File Explorer into the terminal window to
+   auto-fill the correct path.)
+3. Run the script:
+   ```
+   run.bat
+   ```
+   In PowerShell specifically, type `.\run.bat` (with the leading
+   `.\`) instead of `run.bat`.
 
 ---
 
