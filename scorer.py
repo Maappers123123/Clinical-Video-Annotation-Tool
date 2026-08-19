@@ -1,6 +1,7 @@
 import os
 import csv
 import math
+import time
 import cv2
 import numpy as np
 import customtkinter as ctk
@@ -8,7 +9,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Tuple, Union
-from PIL import Image, ImageTk, ImageDraw
+from PIL import Image, ImageTk, ImageDraw, ImageFont
 
 # ============================================================
 # DESIGN TOKENS
@@ -266,13 +267,13 @@ class PILOverlay:
         return img
 
     @staticmethod
-    def fit_to_box(img: Image.Image, box_w: int, box_h: int) -> Image.Image:
+    def fit_to_box(img: Image.Image, box_w: int, box_h: int, resample=Image.Resampling.LANCZOS) -> Image.Image:
         if box_w <= 1 or box_h <= 1:
             return img
         src_w, src_h = img.size
         scale = min(box_w / src_w, box_h / src_h)
         new_size = (max(1, int(src_w * scale)), max(1, int(src_h * scale)))
-        return img.resize(new_size, Image.Resampling.LANCZOS)
+        return img.resize(new_size, resample)
 
 class VideoExporter:
     @staticmethod
@@ -555,7 +556,7 @@ class ConfigScreen(ctk.CTkFrame):
             variable=self.preset_var,
             values=[
                 "None (Manual Selection)",
-                "Dystonia Impairment Scale (DIS)",
+                "Dyskinesia Impairment Scale (DIS)",
                 "QUOVADYS",
                 "BADS",
                 "UMC",
@@ -589,7 +590,7 @@ class ConfigScreen(ctk.CTkFrame):
         self._spacer(left_scroll)
 
         self._section_label(left_scroll, "Clinical Scale Type")
-        self._check(left_scroll, "Dystonia Impairment Scale (DIS)", self.use_dis_var, self._refresh_body_parts)
+        self._check(left_scroll, "Dyskinesia Impairment Scale (DIS)", self.use_dis_var, self._refresh_body_parts)
 
         self.dis_movement_box = ctk.CTkFrame(left_scroll, fg_color=COLORS["panel_bg"], corner_radius=12)
         self.dis_movement_box.pack(fill="x", padx=(18, 0), pady=(6, 12))
@@ -692,7 +693,7 @@ class ConfigScreen(ctk.CTkFrame):
             self.use_bads_var.set(False)
             self.dis_mode_var.set("manual")
             self.movement_var.set("both")
-        elif preset == "Dystonia Impairment Scale (DIS)":
+        elif preset == "Dyskinesia Impairment Scale (DIS)":
             self.use_dis_var.set(True)
             self.use_bads_var.set(False)
             self.dis_mode_var.set("dis_i")
@@ -994,6 +995,19 @@ class AnnotationScreen(ctk.CTkFrame):
         self.first_play_done_for_step = False
         self.current_play_mode = "first_watch"
         self.review_existing_video = False
+
+        self._pending_first_watch = True
+
+        self._start_overlay_active = False
+        self._start_overlay_rect: Optional[Tuple[int, int, int, int]] = None
+        self._start_overlay_img_size: Optional[Tuple[int, int]] = None
+
+        self._built_regions: Optional[List[str]] = None
+
+        self._pending_build_regions: List[str] = []
+        self._pending_build_on_complete = None
+
+        self._timeline_geom: Optional[Tuple[float, float, float, int]] = None
         self._build_ui()
         self._bind_keys()
 
@@ -1040,6 +1054,14 @@ class AnnotationScreen(ctk.CTkFrame):
 
         self.video_canvas = tk.Label(video_area, bg="black")
         self.video_canvas.grid(row=0, column=0, sticky="nsew")
+
+        # The "Start video" overlay is painted directly onto the paused
+        # frame's pixels (see _compose_start_overlay) instead of being a
+        # separate opaque widget placed on top - that way its rounded
+        # corners show the actual video content underneath rather than a
+        # solid background color. A click on the video canvas is checked
+        # against the button's drawn bounding box to trigger playback.
+        self.video_canvas.bind("<Button-1>", self._on_video_canvas_click)
 
         self.timeline_canvas = tk.Canvas(video_area, height=44, bg=COLORS["card_bg"], highlightthickness=0)
         self.timeline_canvas.grid(row=1, column=0, sticky="ew", pady=(8, 0))
@@ -1158,6 +1180,7 @@ class AnnotationScreen(ctk.CTkFrame):
         self.jobs = jobs
         self.current_video_idx = 0
         self.review_existing_video = False
+        self._built_regions = None
         self.set_status("")
         self._load_video(0)
 
@@ -1206,11 +1229,8 @@ class AnnotationScreen(ctk.CTkFrame):
                 return
         else:
             self.review_existing_video = False
-
-        self._build_score_controls()
-        self._load_scores_into_controls()
-        self._enable_review_if_already_scored()
-        self.play_current_segment(first_watch=True)
+        self._load_scores_into_controls(on_ready=self._enable_review_if_already_scored)
+        self._begin_segment(first_watch=True, auto_start=False)
         self.app.after(100, self.app.focus_force)
 
     def _prepare_rows_for_video(self, video_path: str) -> List[Dict[str, str]]:
@@ -1260,15 +1280,26 @@ class AnnotationScreen(ctk.CTkFrame):
         self.score_cards.clear()
         self.active_score_index = 0
 
-    def _build_score_controls(self):
+    def _build_score_controls(self, regions=None, on_complete=None):
         self._clear_score_ui()
-        regions = (
-            self.config.selected_regions
-            if self.config.score_layout_mode == "whole_body"
-            else [self.config.selected_regions[self.current_region_idx]]
-        )
+        if regions is None:
+            regions = (
+                self.config.selected_regions
+                if self.config.score_layout_mode == "whole_body"
+                else [self.config.selected_regions[self.current_region_idx]]
+            )
 
-        for region in regions:
+        self._built_regions = list(regions)
+        self._pending_build_regions = list(regions)
+        self._pending_build_on_complete = on_complete
+        self._build_score_controls_step()
+
+    def _build_score_controls_step(self, batch_size: int = 2):
+        for _ in range(batch_size):
+            if not self._pending_build_regions:
+                break
+            region = self._pending_build_regions.pop(0)
+
             # Oude scorecard-afmetingen/styling
             cell = ctk.CTkFrame(
                 self.score_scroll,
@@ -1296,9 +1327,18 @@ class AnnotationScreen(ctk.CTkFrame):
             self.score_groups[region] = group
             self.score_cards.append((region, cell))
 
+        if self._pending_build_regions:
+            self.after(1, self._build_score_controls_step)
+            return
+
         self._refresh_region_mode_caption()
         self._update_nav_states()
         self.highlight_active_score_card()
+
+        on_complete = self._pending_build_on_complete
+        self._pending_build_on_complete = None
+        if on_complete:
+            on_complete()
 
     def highlight_active_score_card(self):
         if self.config is None or not self.score_cards:
@@ -1340,7 +1380,6 @@ class AnnotationScreen(ctk.CTkFrame):
             pass
 
     def _scroll_active_score_into_view(self):
-        """Auto-scroll score panel so the active card remains visible."""
         if not self.score_cards:
             return
 
@@ -1394,29 +1433,38 @@ class AnnotationScreen(ctk.CTkFrame):
                      f"{REGION_LABELS.get(region, region)}. 0–{self.config.score_max} score • X unscorable."
             )
 
-    def _load_scores_into_controls(self):
-        self._build_score_controls()
+    def _load_scores_into_controls(self, on_ready=None):
+        regions = self._get_current_active_regions()
 
-        for group in self.score_groups.values():
-            group.clear()
+        def _finish():
+            for group in self.score_groups.values():
+                group.clear()
 
-        row = self.rows[self.current_segment_idx]
-        for region in self._get_current_active_regions():
-            value = normalize_score_value(row.get(region, ""))
-            if value != "" and region in self.score_groups:
-                self.score_groups[region].set_value_from_storage(value)
+            row = self.rows[self.current_segment_idx]
+            for region in self._get_current_active_regions():
+                value = normalize_score_value(row.get(region, ""))
+                if value != "" and region in self.score_groups:
+                    self.score_groups[region].set_value_from_storage(value)
 
-        self._refresh_segment_label()
-        self._refresh_region_mode_caption()
-        self._update_nav_states()
+            self._refresh_segment_label()
+            self._refresh_region_mode_caption()
+            self._update_nav_states()
 
-        self.segment_finished = False
-        self.first_play_done_for_step = False
-        self.current_play_mode = "first_watch"
-        self._set_scoring_enabled(False)
-        self._set_next_enabled(False)
-        self.active_score_index = 0
-        self.highlight_active_score_card()
+            self.segment_finished = False
+            self.first_play_done_for_step = False
+            self.current_play_mode = "first_watch"
+            self._set_scoring_enabled(False)
+            self._set_next_enabled(False)
+            self.active_score_index = 0
+            self.highlight_active_score_card()
+
+            if on_ready:
+                on_ready()
+
+        if regions != self._built_regions:
+            self._build_score_controls(regions, on_complete=_finish)
+        else:
+            _finish()
 
     def _refresh_segment_label(self):
         start_s, end_s = self.video_session.get_segment_time_range(self.current_segment_idx)
@@ -1509,8 +1557,7 @@ class AnnotationScreen(ctk.CTkFrame):
         if self.config.score_layout_mode == "whole_body":
             if self.current_segment_idx > 0:
                 self.current_segment_idx -= 1
-                self._load_scores_into_controls()
-                self._enable_review_if_already_scored()
+                self._load_scores_into_controls(on_ready=self._enable_review_if_already_scored)
                 self.play_current_segment(first_watch=True)
                 return
             if self.current_video_idx > 0:
@@ -1519,15 +1566,13 @@ class AnnotationScreen(ctk.CTkFrame):
         else:
             if self.current_segment_idx > 0:
                 self.current_segment_idx -= 1
-                self._load_scores_into_controls()
-                self._enable_review_if_already_scored()
+                self._load_scores_into_controls(on_ready=self._enable_review_if_already_scored)
                 self.play_current_segment(first_watch=True)
                 return
             if self.current_region_idx > 0:
                 self.current_region_idx -= 1
                 self.current_segment_idx = self.video_session.num_segments - 1
-                self._load_scores_into_controls()
-                self._enable_review_if_already_scored()
+                self._load_scores_into_controls(on_ready=self._enable_review_if_already_scored)
                 self.play_current_segment(first_watch=True)
                 return
             if self.current_video_idx > 0:
@@ -1550,9 +1595,8 @@ class AnnotationScreen(ctk.CTkFrame):
             self.current_region_idx = max(0, len(self.config.selected_regions) - 1)
             self.current_segment_idx = max(0, self.video_session.num_segments - 1)
 
-        self._load_scores_into_controls()
-        self._enable_review_if_already_scored()
-        self.play_current_segment(first_watch=True)
+        self._load_scores_into_controls(on_ready=self._enable_review_if_already_scored)
+        self._begin_segment(first_watch=True, auto_start=False)
 
     def apply_numeric_shortcut(self, value: int):
         if self.config is None or value > self.config.score_max or not self.first_play_done_for_step:
@@ -1609,8 +1653,7 @@ class AnnotationScreen(ctk.CTkFrame):
             if self.current_segment_idx < self.video_session.num_segments - 1:
                 self.current_segment_idx += 1
                 self._persist_current_video_csv()
-                self._load_scores_into_controls()
-                self._enable_review_if_already_scored()
+                self._load_scores_into_controls(on_ready=self._enable_review_if_already_scored)
                 self.play_current_segment(first_watch=True)
                 return
             self._persist_current_video_csv()
@@ -1620,8 +1663,7 @@ class AnnotationScreen(ctk.CTkFrame):
         if self.current_segment_idx < self.video_session.num_segments - 1:
             self.current_segment_idx += 1
             self._persist_current_video_csv()
-            self._load_scores_into_controls()
-            self._enable_review_if_already_scored()
+            self._load_scores_into_controls(on_ready=self._enable_review_if_already_scored)
             self.play_current_segment(first_watch=True)
             return
 
@@ -1629,8 +1671,7 @@ class AnnotationScreen(ctk.CTkFrame):
             self.current_region_idx += 1
             self.current_segment_idx = 0
             self._persist_current_video_csv()
-            self._load_scores_into_controls()
-            self._enable_review_if_already_scored()
+            self._load_scores_into_controls(on_ready=self._enable_review_if_already_scored)
             self.play_current_segment(first_watch=True)
             return
 
@@ -1684,10 +1725,135 @@ class AnnotationScreen(ctk.CTkFrame):
         self.shutdown()
         self.app.show("FileSelectionScreen")
 
+    def _begin_segment(self, first_watch: bool = True, auto_start: bool = True):
+        self._pending_first_watch = first_watch
+        if auto_start:
+            self.play_current_segment(first_watch=first_watch)
+        else:
+            self._show_first_frame_paused()
+            self._show_start_overlay()
+
+    def _show_first_frame_paused(self):
+        if self.video_session is None:
+            return
+        self._stop_playback()
+        self.segment_start_frame, self.segment_end_frame = self.video_session.get_segment_frame_range(self.current_segment_idx)
+        self.video_session.seek_to_frame(self.segment_start_frame)
+        ok, frame = self.video_session.read_frame()
+        # Seek back so playback starts from the segment's first frame once
+        # the user actually clicks Start.
+        self.video_session.seek_to_frame(self.segment_start_frame)
+        if ok:
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            pil = Image.fromarray(rgb)
+            self.current_pil_frame = self._draw_preview_overlay(pil)
+        self._timeline_geom = None
+        self._draw_timeline()
+        self._set_button_state(self.replay_btn, False)
+
+    def _show_start_overlay(self):
+        self._start_overlay_active = True
+        self.video_canvas.config(cursor="hand2")
+        self._render_paused_frame_with_overlay()
+
+    def _hide_start_overlay(self):
+        self._start_overlay_active = False
+        self._start_overlay_rect = None
+        self.video_canvas.config(cursor="")
+
+    def _render_paused_frame_with_overlay(self):
+        if self.current_pil_frame is None:
+            return
+        w = self.video_canvas.winfo_width()
+        h = self.video_canvas.winfo_height()
+        if w < 2 or h < 2:
+            return
+        fitted = PILOverlay.fit_to_box(self.current_pil_frame, w, h, resample=Image.Resampling.BILINEAR)
+        composed, rect = self._compose_start_overlay(fitted)
+        self._start_overlay_rect = rect
+        self._start_overlay_img_size = composed.size
+        self.tk_preview = ImageTk.PhotoImage(composed)
+        self.video_canvas.config(image=self.tk_preview)
+
+    def _compose_start_overlay(self, pil_img: Image.Image) -> Tuple[Image.Image, Tuple[int, int, int, int]]:
+        img = pil_img.convert("RGB").copy()
+        draw = ImageDraw.Draw(img)
+
+        btn_w, btn_h = 220, 60
+        cx, cy = img.width // 2, img.height // 2
+        x1, y1 = cx - btn_w // 2, cy - btn_h // 2
+        x2, y2 = cx + btn_w // 2, cy + btn_h // 2
+        radius = btn_h // 2
+        color = "#2B63FF"
+
+        try:
+            draw.rounded_rectangle([x1, y1, x2, y2], radius=radius, fill=color)
+        except AttributeError:
+            # Very old Pillow without rounded_rectangle support.
+            draw.rectangle([x1, y1, x2, y2], fill=color)
+
+        font = self._get_overlay_font(20)
+        text = "Start video"
+        try:
+            bbox = draw.textbbox((0, 0), text, font=font)
+            text_w, text_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+            text_top = bbox[1]
+        except Exception:
+            text_w, text_h = draw.textsize(text, font=font)
+            text_top = 0
+
+        tri_w, tri_h, gap = 16, 18, 10
+        content_w = tri_w + gap + text_w
+        start_x = cx - content_w // 2
+
+        tri_x = start_x
+        draw.polygon(
+            [
+                (tri_x, cy - tri_h // 2),
+                (tri_x, cy + tri_h // 2),
+                (tri_x + tri_w, cy),
+            ],
+            fill="white",
+        )
+
+        text_x = tri_x + tri_w + gap
+        text_y = cy - text_h // 2 - text_top
+        draw.text((text_x, text_y), text, fill="white", font=font)
+
+        return img, (x1, y1, x2, y2)
+
+    def _get_overlay_font(self, size: int):
+        for name in ("segoeuib.ttf", "seguisb.ttf", "arialbd.ttf", "Arial Bold.ttf", "DejaVuSans-Bold.ttf"):
+            try:
+                return ImageFont.truetype(name, size)
+            except Exception:
+                continue
+        return ImageFont.load_default()
+
+    def _on_video_canvas_click(self, event):
+        if not self._start_overlay_active or self._start_overlay_rect is None:
+            return
+        w = self.video_canvas.winfo_width()
+        h = self.video_canvas.winfo_height()
+        img_w, img_h = self._start_overlay_img_size or (w, h)
+        offset_x = max(0, (w - img_w) // 2)
+        offset_y = max(0, (h - img_h) // 2)
+        x = event.x - offset_x
+        y = event.y - offset_y
+        x1, y1, x2, y2 = self._start_overlay_rect
+        if x1 <= x <= x2 and y1 <= y <= y2:
+            self._start_playback_clicked()
+
+    def _start_playback_clicked(self):
+        self._hide_start_overlay()
+        self._set_button_state(self.replay_btn, True)
+        self.play_current_segment(first_watch=self._pending_first_watch)
+
     def play_current_segment(self, first_watch=True):
         if self.video_session is None:
             return
 
+        self._hide_start_overlay()
         self._stop_playback()
         self.segment_finished = False
         self.current_play_mode = "first_watch" if first_watch else "replay"
@@ -1702,9 +1868,10 @@ class AnnotationScreen(ctk.CTkFrame):
         else:
             self._set_scoring_enabled(True)
             self._set_next_enabled(self._current_scores_complete() or self._row_scores_complete())
+        self._timeline_geom = None
+        self._draw_timeline()
 
-        delay = max(1, int(round(1000 / self.video_session.fps)))
-        self._tick(delay)
+        self._tick()
 
     def replay_current_segment(self):
         if self.video_session is None:
@@ -1714,9 +1881,11 @@ class AnnotationScreen(ctk.CTkFrame):
         self._set_next_enabled(self._current_scores_complete() or self._row_scores_complete())
         self.play_current_segment(first_watch=False)
 
-    def _tick(self, delay_ms: int):
+    def _tick(self):
         if not self.playing or self.video_session is None:
             return
+
+        frame_start = time.perf_counter()
 
         current_pos = int(self.video_session.cap.get(cv2.CAP_PROP_POS_FRAMES))
         if current_pos >= self.segment_end_frame:
@@ -1728,7 +1897,7 @@ class AnnotationScreen(ctk.CTkFrame):
             self._set_next_enabled(self._current_scores_complete() or self._row_scores_complete())
             self._update_nav_states()
             self.highlight_active_score_card()
-            self._draw_timeline()
+            self._draw_timeline_dynamic()
             return
 
         ok, frame = self.video_session.read_frame()
@@ -1741,15 +1910,18 @@ class AnnotationScreen(ctk.CTkFrame):
             self._set_next_enabled(self._current_scores_complete() or self._row_scores_complete())
             self._update_nav_states()
             self.highlight_active_score_card()
-            self._draw_timeline()
+            self._draw_timeline_dynamic()
             return
 
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         pil = Image.fromarray(rgb)
         self.current_pil_frame = self._draw_preview_overlay(pil)
         self._render_pil_to_canvas(self.current_pil_frame)
-        self._draw_timeline()
-        self.play_job = self.after(delay_ms, lambda: self._tick(delay_ms))
+        self._draw_timeline_dynamic()
+        frame_interval = 1.0 / self.video_session.fps
+        processing_time = time.perf_counter() - frame_start
+        next_delay = max(1, int((frame_interval - processing_time) * 1000))
+        self.play_job = self.after(next_delay, self._tick)
 
     def _rounded_rect(self, canvas, x1, y1, x2, y2, radius=10, **kwargs):
         radius = max(0, min(radius, abs(x2 - x1) / 2, abs(y2 - y1) / 2))
@@ -1772,9 +1944,17 @@ class AnnotationScreen(ctk.CTkFrame):
     def _draw_timeline(self):
         if not hasattr(self, "timeline_canvas") or self.video_session is None:
             return
+        self.timeline_canvas.delete("all")
+        self._timeline_geom = None
+        self._draw_timeline_static()
+        self._draw_timeline_dynamic()
+
+    def _draw_timeline_static(self):
+        if not hasattr(self, "timeline_canvas") or self.video_session is None:
+            return
 
         c = self.timeline_canvas
-        c.delete("all")
+        c.delete("timeline_static")
         w = max(1, c.winfo_width())
         h = max(1, c.winfo_height())
 
@@ -1784,14 +1964,11 @@ class AnnotationScreen(ctk.CTkFrame):
         bar_h = 10
 
         if right <= left:
+            self._timeline_geom = None
             return
 
         total_frames = max(1, self.video_session.total_frames)
-        total_s = total_frames / max(1, self.video_session.fps)
-
         start_f, end_f = self.video_session.get_segment_frame_range(self.current_segment_idx)
-        cur_f = int(self.video_session.cap.get(cv2.CAP_PROP_POS_FRAMES)) if self.video_session.cap is not None else start_f
-        cur_f = max(0, min(cur_f, total_frames))
 
         def x_for_frame(frame_idx):
             return left + (right - left) * frame_idx / total_frames
@@ -1805,7 +1982,8 @@ class AnnotationScreen(ctk.CTkFrame):
             radius=bar_h // 2,
             fill=COLORS["timeline_track"],
             outline=COLORS["timeline_outline"],
-            width=1
+            width=1,
+            tags=("timeline_static",),
         )
 
         sx = x_for_frame(start_f)
@@ -1819,7 +1997,8 @@ class AnnotationScreen(ctk.CTkFrame):
             radius=bar_h // 2 + 1,
             fill=COLORS["timeline_selected_soft"],
             outline=COLORS["timeline_selected"],
-            width=1
+            width=1,
+            tags=("timeline_static",),
         )
 
         if self.config.scoring_mode == "window":
@@ -1835,7 +2014,8 @@ class AnnotationScreen(ctk.CTkFrame):
                     y + 10,
                     radius=2,
                     fill=COLORS["timeline_selected"] if idx == self.current_segment_idx else COLORS["timeline_tick"],
-                    outline=""
+                    outline="",
+                    tags=("timeline_static",),
                 )
 
                 show_label = (
@@ -1850,20 +2030,51 @@ class AnnotationScreen(ctk.CTkFrame):
                         text=f"Window {idx + 1}",
                         anchor="w",
                         fill=COLORS["timeline_label"],
-                        font=(FONT_MAIN, 9, "bold")
+                        font=(FONT_MAIN, 9, "bold"),
+                        tags=("timeline_static",),
                     )
 
-        px = x_for_frame(cur_f)
-        c.create_oval(px - 7, y - 7, px + 7, y + 7, fill="white", outline=COLORS["timeline_knob"], width=2)
-        c.create_oval(px - 4, y - 4, px + 4, y + 4, fill=COLORS["timeline_knob"], outline=COLORS["timeline_knob"])
+        self._timeline_geom = (left, right, y, total_frames)
 
+    def _draw_timeline_dynamic(self):
+        if not hasattr(self, "timeline_canvas") or self.video_session is None:
+            return
+        if self._timeline_geom is None:
+            self._draw_timeline_static()
+            if self._timeline_geom is None:
+                return
+
+        c = self.timeline_canvas
+        left, right, y, total_frames = self._timeline_geom
+        c.delete("timeline_dynamic")
+
+        if right <= left:
+            return
+
+        cur_f = int(self.video_session.cap.get(cv2.CAP_PROP_POS_FRAMES)) if self.video_session.cap is not None else 0
+        cur_f = max(0, min(cur_f, total_frames))
+        px = left + (right - left) * cur_f / total_frames
+
+        c.create_oval(
+            px - 7, y - 7, px + 7, y + 7,
+            fill="white", outline=COLORS["timeline_knob"], width=2,
+            tags=("timeline_dynamic",),
+        )
+        c.create_oval(
+            px - 4, y - 4, px + 4, y + 4,
+            fill=COLORS["timeline_knob"], outline=COLORS["timeline_knob"],
+            tags=("timeline_dynamic",),
+        )
+
+        total_s = total_frames / max(1, self.video_session.fps)
         c.create_text(
             right + 10,
             y,
             text=f"{cur_f / self.video_session.fps:.1f}s / {total_s:.1f}s",
             anchor="w",
             fill=COLORS["timeline_label"],
-            font=(FONT_MAIN, 9, "bold")
+            font=(FONT_MAIN, 9, "bold"),
+            tags=("timeline_dynamic",),
         )
 
     def _draw_preview_overlay(self, img: Image.Image) -> Image.Image:
@@ -1880,12 +2091,16 @@ class AnnotationScreen(ctk.CTkFrame):
         h = self.video_canvas.winfo_height()
         if w < 2 or h < 2:
             return
-        fitted = PILOverlay.fit_to_box(pil_img, w, h)
+        fitted = PILOverlay.fit_to_box(pil_img, w, h, resample=Image.Resampling.BILINEAR)
         self.tk_preview = ImageTk.PhotoImage(fitted)
         self.video_canvas.config(image=self.tk_preview)
 
     def _rerender_current_frame(self):
-        if self.current_pil_frame is not None:
+        if self.current_pil_frame is None:
+            return
+        if self._start_overlay_active:
+            self._render_paused_frame_with_overlay()
+        else:
             self._render_pil_to_canvas(self.current_pil_frame)
 
 # ============================================================
